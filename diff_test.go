@@ -7,15 +7,28 @@ import (
 	"testing"
 )
 
+type innerStruct struct {
+	A    string
+	Data string
+}
+
+func (p innerStruct) ID() string {
+	return string(p.A)
+}
+
 type myStruct struct {
-	P  string
-	F1 int        `diff:"value"`
-	F2 int        `diff:"ignore"`
-	F3 []myStruct `diff:"composition"`
-	F4 []myStruct
-	F5 []HasIdentifier
-	F6 []int
-	F7 []string
+	P   string
+	F1  int        `diff:"value"`
+	F2  int        `diff:"ignore"`
+	F3  []myStruct `diff:"composition"`
+	F4  []myStruct
+	F5  []HasIdentifier
+	F6  []int
+	F7  []string
+	F8  HasIdentifier
+	F10 *myStruct
+	F11 *innerStruct
+	F12 innerStruct
 }
 
 func (p myStruct) ID() string {
@@ -45,6 +58,8 @@ func diffReport(d *diff, report []string) []string {
 		}
 		if v.Modified != nil {
 			for _, dd := range v.Modified {
+				line := fmt.Sprintf("%s.%s:Modified=%s", d.ID, k, dd.ID)
+				report = append(report, line)
 				report = diffReport(&dd, report)
 			}
 		}
@@ -110,14 +125,28 @@ func TestCheckDiff2(t *testing.T) {
 			report: []string{"A.F3:Deleted=B1", "A.F3:New=B2"},
 		},
 		{
-			name: "f3.B1_modified",
+			name: "f3.B1_modified_notB200",
 			current: myStruct{P: "A", F1: 1, F2: 2, F3: []myStruct{
-				{P: "B1", F1: 1, F2: 2}, {P: "B2", F1: 10, F2: 20},
+				{P: "B1", F1: 1, F2: 2}, {P: "B200", F1: 10, F2: 20},
 			}},
 			proposed: myStruct{P: "A", F1: 1, F2: 2, F3: []myStruct{
-				{P: "B1", F1: 3, F2: 3}, {P: "B2", F1: 10, F2: 20},
+				{P: "B1", F1: 3, F2: 3}, {P: "B200", F1: 10, F2: 20},
 			}},
-			report: []string{"B1.F1:1->3"},
+			report: []string{"A.F3:Modified=B1", "B1.F1:1->3"},
+		},
+		{
+			name: "deep change",
+			current: myStruct{P: "A", F3: []myStruct{
+				{P: "B1", F3: []myStruct{
+					{P: "B100", F12: innerStruct{A: "AA", Data: "d0"}},
+				}},
+			}},
+			proposed: myStruct{P: "A", F3: []myStruct{
+				{P: "B1", F3: []myStruct{
+					{P: "B100", F12: innerStruct{A: "AA", Data: "d1"}},
+				}},
+			}},
+			report: []string{"A.F3:Modified=B1", "AA.Data:d0->d1", "B1.F3:Modified=B100", "B100.F12:Modified=AA"},
 		},
 		{
 			name: "doubleCompoAllTypeOfChange",
@@ -133,7 +162,37 @@ func TestCheckDiff2(t *testing.T) {
 				},
 				},
 			}},
-			report: []string{"B1.F1:1->5", "B1.F3:Deleted=C1", "B1.F3:New=C3", "C2.F1:10->100"},
+			report: []string{"A.F3:Modified=B1", "B1.F1:1->5", "B1.F3:Deleted=C1", "B1.F3:Modified=C2", "B1.F3:New=C3", "C2.F1:10->100"},
+		},
+		{
+			name:     "innerStructNoChange",
+			current:  myStruct{P: "A", F11: &innerStruct{A: "AA"}},
+			proposed: myStruct{P: "A", F11: &innerStruct{A: "AA"}},
+			report:   []string{},
+		},
+		{
+			name:     "innerStructNoChange",
+			current:  myStruct{P: "A", F12: innerStruct{A: "AA"}},
+			proposed: myStruct{P: "A", F12: innerStruct{A: "AA"}},
+			report:   []string{},
+		},
+		{
+			name:     "innerStructDataChange",
+			current:  myStruct{P: "A", F12: innerStruct{A: "AA", Data: "oldValue"}},
+			proposed: myStruct{P: "A", F12: innerStruct{A: "AA", Data: "newValue"}},
+			report:   []string{"A.F12:Modified=AA", "AA.Data:oldValue->newValue"},
+		},
+		{
+			name:     "innerStructReplaced",
+			current:  myStruct{P: "A", F12: innerStruct{A: "AA"}},
+			proposed: myStruct{P: "A", F12: innerStruct{A: "BB"}},
+			report:   []string{"A.F12:Deleted=AA", "A.F12:New=BB"},
+		},
+		{
+			name:     "innerStructNew",
+			current:  myStruct{P: "A"},
+			proposed: myStruct{P: "A", F11: &innerStruct{A: "AA"}},
+			report:   []string{"A.F11:New=AA"},
 		},
 	}
 
@@ -225,7 +284,7 @@ func TestCheckDiff(t *testing.T) {
 			proposed: myStruct{P: "A", F1: 1, F2: 2, F3: []myStruct{
 				{P: "B1", F1: 3, F2: 3}, {P: "B2", F1: 10, F2: 20},
 			}},
-			report: []string{"B1.F1:1->3"},
+			report: []string{"A.F3:Modified=B1", "B1.F1:1->3"},
 		},
 		{
 			name: "doubleCompoAllTypeOfChange",
@@ -241,7 +300,7 @@ func TestCheckDiff(t *testing.T) {
 				},
 				},
 			}},
-			report: []string{"B1.F1:1->5", "B1.F3:Deleted=C1", "B1.F3:New=C3", "C2.F1:10->100"},
+			report: []string{"A.F3:Modified=B1", "B1.F1:1->5", "B1.F3:Deleted=C1", "B1.F3:Modified=C2", "B1.F3:New=C3", "C2.F1:10->100"},
 		},
 	}
 
@@ -386,4 +445,79 @@ func TestCheckDiffInComposition(t *testing.T) {
 
 	}
 
+}
+
+type testStruct struct{}
+
+func (t *testStruct) ID() string {
+	return "0"
+}
+
+type testStructV struct{}
+
+func (t testStructV) ID() string {
+	return "V"
+}
+
+func TestIdentifierFormInterface(t *testing.T) {
+
+	var iNil HasIdentifier
+	iNil = (*testStruct)(nil)
+
+	testcase := []struct {
+		name           string
+		input          interface{}
+		expectedErrStr string
+		expectedID     string
+	}{
+		{
+			name:           "not init interface",
+			expectedErrStr: "nil interface cannot get identifier",
+		},
+		{
+			name:           "bad interface type",
+			input:          new(string),
+			expectedErrStr: "type assertion to 'hasIdentifier' failed",
+		},
+		{
+			name:           "nil value",
+			input:          iNil,
+			expectedErrStr: "nil pointed value",
+		},
+		{
+			name:       "valid",
+			input:      &testStruct{},
+			expectedID: "0",
+		},
+		{
+			name:       "valid V",
+			input:      testStructV{},
+			expectedID: "V",
+		},
+	}
+
+	for _, tc := range testcase {
+		//fmt.Printf("Test %s:\n", tc.name)
+		i, e := identifierFormInterface(tc.input)
+		if len(tc.expectedErrStr) > 0 && (e == nil) {
+			t.Errorf("%s : no error returned, but expect error: %s", tc.name, tc.expectedErrStr)
+			continue
+		}
+		if len(tc.expectedErrStr) > 0 && tc.expectedErrStr != e.Error() {
+			t.Errorf("%s : \nexpectedError:\n%s\nGot:\n%s\n", tc.name, tc.expectedErrStr, e.Error())
+			continue
+		}
+		if len(tc.expectedErrStr) == 0 && e != nil {
+			t.Errorf("%s : \nexpectedError:\n%s\nGot:\n%s\n", tc.name, tc.expectedErrStr, e.Error())
+			continue
+		}
+		if len(tc.expectedErrStr) > 0 && tc.expectedErrStr == e.Error() {
+			continue // ok error case match
+		}
+		if i.ID() != tc.expectedID {
+			t.Errorf("%s : Bad Id\nExpected:%s  Got:%s\n", tc.name, tc.expectedID, i.ID())
+			continue
+		}
+
+	}
 }

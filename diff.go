@@ -37,6 +37,24 @@ func newDiffComposition() diffComposition {
 	return diffComposition{[]diff{}, []interface{}{}, []interface{}{}}
 }
 
+func identifierFormInterface(i interface{}) (HasIdentifier, error) {
+	if i == nil {
+		return nil, fmt.Errorf("nil interface cannot get identifier")
+	}
+	iHasIdentifier, ok := i.(HasIdentifier)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to 'hasIdentifier' failed")
+	}
+	v := reflect.ValueOf(i)
+	switch v.Kind() {
+	case reflect.Interface, reflect.Ptr:
+		if v.IsNil() {
+			return nil, fmt.Errorf("nil pointed value")
+		}
+	}
+	return iHasIdentifier, nil
+}
+
 func checkDiff2(current, proposed HasIdentifier) (*diff, error) {
 	if current == nil || proposed == nil {
 		return nil, fmt.Errorf("Nil inputs")
@@ -58,6 +76,17 @@ func checkDiff2(current, proposed HasIdentifier) (*diff, error) {
 
 	vc := reflect.ValueOf(current)
 	vp := reflect.ValueOf(proposed)
+
+	if vc.Type().Kind() == reflect.Interface {
+		vc = vc.Elem()
+		vp = vp.Elem()
+	}
+
+	if vc.Type().Kind() == reflect.Ptr {
+		vc = vc.Elem()
+		vp = vp.Elem()
+	}
+
 	for i := 0; i < vc.NumField(); i++ {
 
 		valueFieldc := vc.Field(i)
@@ -73,16 +102,65 @@ func checkDiff2(current, proposed HasIdentifier) (*diff, error) {
 		fmt.Printf("%s of kind %s\n", fieldName, valueFieldc.Type().Kind().String())
 		k := valueFieldc.Type().Kind()
 		switch {
-		case k >= reflect.Bool && k <= reflect.Complex128 || k == reflect.String:
+		case k >= reflect.Bool && k <= reflect.Complex128, k == reflect.String:
 			if !reflect.DeepEqual(valueFieldc.Interface(), valueFieldp.Interface()) {
 				d.Param[fieldName] = diffValues{Current: valueFieldc, Proposed: valueFieldp}
+			}
+		case k == reflect.Interface, k == reflect.Struct, k == reflect.Ptr:
+			if valueFieldc.Type().Implements(hasIdentifierType) {
+
+				cID, cErr := identifierFormInterface(valueFieldc.Interface())
+				pID, pErr := identifierFormInterface(valueFieldp.Interface())
+
+				if cErr != nil && pErr != nil {
+					//fmt.Printf("%s: both nil\n", fieldName)
+					break
+				}
+
+				if cErr != nil && pErr == nil {
+					dc := d.Composition[fieldName]
+					dc.New = append(dc.New, pID)
+					d.Composition[fieldName] = dc
+					//fmt.Printf("%s: Value was initialized with ID %s\n", fieldName, pID)
+					// TODO report
+					break
+				}
+				if cErr == nil && pErr != nil {
+					dc := d.Composition[fieldName]
+					dc.Deleted = append(dc.Deleted, cID)
+					d.Composition[fieldName] = dc
+					// fmt.Printf("%s: Value was cleared (previous %s)\n", fieldName, cID)
+					// TODO report
+					break
+				}
+
+				if cErr == nil && pErr == nil {
+					if cID.ID() == pID.ID() {
+						//	fmt.Printf("Field %s Interface pointing to same ID\n", fieldName)
+						md, err := checkDiff2(cID, pID)
+						if err != nil {
+							return nil, err
+						}
+						if !md.Empty() {
+							dc := d.Composition[fieldName]
+							dc.Modified = append(dc.Modified, *md)
+							d.Composition[fieldName] = dc
+						}
+					} else {
+						dc := d.Composition[fieldName]
+						dc.Deleted = append(dc.Deleted, cID)
+						dc.New = append(dc.New, pID)
+						d.Composition[fieldName] = dc
+
+						//	fmt.Printf("Field %s changed from %s to %s\n", fieldName, cID, pID)
+					}
+				}
 			}
 		case k == reflect.Array || k == reflect.Slice:
 
 			// check if inner type implements HasIdentifier
 			if valueFieldc.Type().Elem().Implements(hasIdentifierType) {
 				same, added, deleted, err := checkDiffInComposition(valueFieldc.Interface(), valueFieldp.Interface())
-				d.Composition[fieldName] = newDiffComposition()
 				if err != nil {
 					return nil, err
 				}
@@ -97,8 +175,9 @@ func checkDiff2(current, proposed HasIdentifier) (*diff, error) {
 					d.Composition[fieldName] = dc
 				}
 				for _, n := range same {
-					fmt.Printf("Checking compo under same path %s\n", n[0].ID())
-					md, err := checkDiff(n[0], n[1])
+					id := n[0].ID()
+					fmt.Printf("Checking compo under same path %s\n", id)
+					md, err := checkDiff2(n[0], n[1])
 					if err != nil {
 						return nil, err
 					}
@@ -114,58 +193,7 @@ func checkDiff2(current, proposed HasIdentifier) (*diff, error) {
 					d.Param[fieldName] = diffValues{Current: valueFieldc, Proposed: valueFieldp}
 				}
 			}
-
-			fmt.Printf("%s of elment in slice %s\n", fieldName, valueFieldc.Type().Elem().Kind().String())
-
-			fmt.Printf("%s implement hasIdentifier:%v\n", fieldName, valueFieldc.Type().Elem().Implements(hasIdentifierType))
-
 		}
-		// Bool
-		// Int
-		// Int8
-		// Int16
-		// Int32
-		// Int64
-		// Uint
-		// Uint8
-		// Uint16
-		// Uint32
-		// Uint64
-		// Uintptr
-		// Float32
-		// Float64
-		// Complex64
-		// Complex128
-		// Array
-		// Chan
-		// Func
-		// Interface
-		// Map
-		// Ptr
-		// Slice
-		// String
-		// Struct
-		// UnsafePointer
-
-		// av := vc.Field(i)
-		// bv := vp.FieldByName(av.Name)
-
-		// at := av.Type()
-		// bt := bv.Type()
-		// if at != bt {
-		// 	w.printf("%v != %v", at, bt)
-		// 	return
-		// }
-
-		// // numeric types, including bool
-		// if at.Kind() < reflect.Array {
-		// 	a, b := av.Interface(), bv.Interface()
-		// 	if a != b {
-		// 		w.printf("%#v != %#v", a, b)
-		// 	}
-		// 	return
-		// }
-
 	}
 	return &d, nil
 }
@@ -198,7 +226,6 @@ func checkDiff(current, proposed HasIdentifier) (*diff, error) {
 			}
 		case "composition":
 			same, added, deleted, err := checkDiffInComposition(vcurrent, vproposed)
-			d.Composition[fieldName] = newDiffComposition()
 			if err != nil {
 				return nil, err
 			}
