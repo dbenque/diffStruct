@@ -12,6 +12,10 @@ type innerStruct struct {
 	Data string
 }
 
+type anyStruct struct {
+	I int
+}
+
 func (p innerStruct) ID() string {
 	return string(p.A)
 }
@@ -29,6 +33,7 @@ type myStruct struct {
 	F10 *myStruct
 	F11 *innerStruct
 	F12 innerStruct
+	F13 anyStruct
 }
 
 func (p myStruct) ID() string {
@@ -135,7 +140,7 @@ func TestCheckDiff2(t *testing.T) {
 			report: []string{"A.F3:Modified=B1", "B1.F1:1->3"},
 		},
 		{
-			name: "deep change",
+			name: "deep change slice",
 			current: myStruct{P: "A", F3: []myStruct{
 				{P: "B1", F3: []myStruct{
 					{P: "B100", F12: innerStruct{A: "AA", Data: "d0"}},
@@ -148,6 +153,13 @@ func TestCheckDiff2(t *testing.T) {
 			}},
 			report: []string{"A.F3:Modified=B1", "AA.Data:d0->d1", "B1.F3:Modified=B100", "B100.F12:Modified=AA"},
 		},
+		{
+			name:     "deep change ptr",
+			current:  myStruct{P: "A", F10: &myStruct{P: "B1", F10: &myStruct{P: "B100", F12: innerStruct{A: "AA", Data: "d0"}}}},
+			proposed: myStruct{P: "A", F10: &myStruct{P: "B1", F10: &myStruct{P: "B100", F12: innerStruct{A: "AA", Data: "d1"}}}},
+			report:   []string{"A.F10:Modified=B1", "AA.Data:d0->d1", "B1.F10:Modified=B100", "B100.F12:Modified=AA"},
+		},
+
 		{
 			name: "doubleCompoAllTypeOfChange",
 			current: myStruct{P: "A", F1: 1, F2: 2, F3: []myStruct{
@@ -193,6 +205,12 @@ func TestCheckDiff2(t *testing.T) {
 			current:  myStruct{P: "A"},
 			proposed: myStruct{P: "A", F11: &innerStruct{A: "AA"}},
 			report:   []string{"A.F11:New=AA"},
+		},
+		{
+			name:     "anyStructChange",
+			current:  myStruct{P: "A"},
+			proposed: myStruct{P: "A", F13: anyStruct{I: 100}},
+			report:   []string{"A.F13:{0}->{100}"},
 		},
 	}
 
@@ -324,7 +342,7 @@ func TestCheckDiff(t *testing.T) {
 
 type PathI string
 
-func (p PathI) Path() string {
+func (p PathI) ID() string {
 	return string(p)
 }
 
